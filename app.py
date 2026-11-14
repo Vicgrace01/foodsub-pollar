@@ -13,14 +13,33 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
+# ---------- Postgres driver ----------
+# Prefer psycopg (v3), fall back to psycopg2, else no Postgres.
+HAS_PG = False
+PG_DRIVER = None
+PG_INTEGRITY_ERROR = type("PGIntegrityError", (Exception,), {})
+PG_IMPORT_ERROR = "not attempted"
+PG_CONNECT = None
+
 try:
-    import psycopg2
-    import psycopg2.extras
-    PG_INTEGRITY_ERROR = psycopg2.IntegrityError
-    HAS_PSYCOPG2 = True
-except ImportError:
-    PG_INTEGRITY_ERROR = type("PGIntegrityError", (Exception,), {})
-    HAS_PSYCOPG2 = False
+    import psycopg
+    import psycopg.rows
+    import psycopg.errors
+    PG_DRIVER = "psycopg3"
+    PG_INTEGRITY_ERROR = psycopg.errors.IntegrityError
+    PG_CONNECT = psycopg.connect
+    HAS_PG = True
+except Exception as e:
+    PG_IMPORT_ERROR = f"psycopg3({type(e).__name__}): {e}"
+    try:
+        import psycopg2
+        import psycopg2.extras
+        PG_DRIVER = "psycopg2"
+        PG_INTEGRITY_ERROR = psycopg2.IntegrityError
+        PG_CONNECT = psycopg2.connect
+        HAS_PG = True
+    except Exception as e2:
+        PG_IMPORT_ERROR = f"{PG_IMPORT_ERROR} | psycopg2({type(e2).__name__}): {e2}"
 
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
@@ -69,7 +88,10 @@ class DBWrapper:
     def execute(self, sql, params=()):
         if self._is_pg:
             sql = sql.replace("?", "%s")
-            cur = self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            if PG_DRIVER == "psycopg3":
+                cur = self._conn.cursor(row_factory=psycopg.rows.dict_row)
+            else:
+                cur = self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
         else:
             cur = self._conn.cursor()
         cur.execute(sql, params)
@@ -90,9 +112,11 @@ class DBWrapper:
 
 def get_db():
     if DATABASE_URL:
-        if not HAS_PSYCOPG2:
-            raise RuntimeError("DATABASE_URL is set but psycopg2-binary is not installed.")
-        return DBWrapper(psycopg2.connect(DATABASE_URL), is_pg=True)
+        if not HAS_PG:
+            raise RuntimeError(
+                f"DATABASE_URL is set but no Postgres driver could be imported: {PG_IMPORT_ERROR}"
+            )
+        return DBWrapper(PG_CONNECT(DATABASE_URL), is_pg=True)
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     c = sqlite3.connect(DB_PATH, timeout=20)
     c.row_factory = sqlite3.Row
@@ -183,7 +207,13 @@ def valid_stellar_g_address(value: str) -> bool:
 # ---------- Routes ----------
 @app.get("/health")
 def health():
-    return jsonify(ok=True, network=POLLAR_NETWORK, db=("postgres" if DATABASE_URL else "sqlite"))
+    return jsonify(
+        ok=True,
+        network=POLLAR_NETWORK,
+        db=("postgres" if DATABASE_URL else "sqlite"),
+        pg_driver=PG_DRIVER,
+        pg_error=(PG_IMPORT_ERROR if (DATABASE_URL and not HAS_PG) else None),
+    )
 
 
 @app.get("/")
