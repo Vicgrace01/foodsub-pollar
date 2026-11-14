@@ -1,5 +1,6 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { createPortal } from 'react-dom';
 import { PollarProvider, usePollar } from '@pollar/react';
 import '@pollar/react/styles.css';
 import './pollar.css';
@@ -188,7 +189,7 @@ function PollarExperience() {
         {isAuthenticated && walletAddress ? `Pollar · ${shortAddress(walletAddress)}` : isAuthenticated ? 'Pollar wallet' : 'Connect Pollar'}
       </button>
 
-      {checkout && (
+      {checkout && createPortal(
         <div className="pollar-overlay" role="dialog" aria-modal="true" aria-label="Pollar checkout" onMouseDown={(event) => { if (event.target === event.currentTarget && !busy) setCheckout(null); }}>
           <div className="pollar-dialog">
             <button className="pollar-close" onClick={() => !busy && setCheckout(null)} aria-label="Close">×</button>
@@ -229,7 +230,8 @@ function PollarExperience() {
             {configStatus === 'error' && <div className="pollar-status pollar-error">Pollar configuration could not be loaded. Check the Pollar dashboard app, network and allowed domain.</div>}
             <p className="pollar-note">Network: {network || config.pollarNetwork || 'testnet'}. Payments are verified against Stellar Horizon before FoodSub marks the order as paid.</p>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   );
