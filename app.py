@@ -589,7 +589,6 @@ def zcash_webhook():
     if not sig or not ts or not secret:
         return jsonify(error="Missing signature/timestamp/secret"), 400
 
-    # CipherPay signs: HMAC-SHA256(secret, "{timestamp}.{raw_body}")
     message = f"{ts}.{raw}"
     expected = hmac.new(secret.encode(), message.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, sig):
@@ -618,7 +617,7 @@ def zcash_webhook():
         if not order:
             return jsonify(ok=True, ignored=True, reason=f"no matching order for memo {memo}"), 200
 
-        if etype == "invoice.confirmed" and (status in ("CONFIRMED", "PAID", "") or True):
+        if etype == "invoice.confirmed":
             if order["status"] == "paid":
                 return jsonify(ok=True, already_paid=True), 200
             conn.execute(
@@ -645,7 +644,7 @@ def zcash_sync(invoice_id):
 
     try:
         r = requests.get(
-            f"{CIPHERPAY_API_BASE}/api/invoices/{invoice_id}/status",
+            f"{CIPHERPAY_API_BASE}/api/invoices/{invoice_id}",
             headers={"Authorization": f"Bearer {CIPHERPAY_API_KEY}"},
             timeout=15,
         )
@@ -655,12 +654,12 @@ def zcash_sync(invoice_id):
     except requests.RequestException as e:
         return jsonify(error=f"CipherPay status request failed: {e}"), 502
 
-    status = str(data.get("status") or data.get("invoice", {}).get("status") or "").upper()
-    memo = data.get("memo_code") or data.get("invoice", {}).get("memo_code")
-    txid = data.get("txid") or data.get("tx_hash") or data.get("invoice", {}).get("txid")
+    status = str(data.get("status") or "").upper()
+    memo = data.get("memo_code") or data.get("memo")
+    txid = data.get("detected_txid") or data.get("txid") or data.get("tx_hash")
 
     if status not in ("CONFIRMED", "PAID") or not memo:
-        return jsonify(ok=False, status=status, memo=memo, message="Not confirmed yet")
+        return jsonify(ok=False, status=status, memo=memo, message="Not confirmed on CipherPay yet")
 
     with get_db() as conn:
         order = conn.execute(
@@ -676,6 +675,50 @@ def zcash_sync(invoice_id):
             (txid, order["id"]),
         )
     return jsonify(ok=True, order_id=order["id"], txid=txid, memo=memo), 200
+
+
+@app.post("/api/zcash/manual-confirm")
+def zcash_manual_confirm():
+    """Admin fallback: mark a zcash order paid when CipherPay's scanner
+    cannot detect Ironwood pool transactions. Requires the exact txid and memo."""
+    user = current_user()
+    if not user:
+        return jsonify(error="Login required"), 401
+
+    data = json_body()
+    order_id = data.get("order_id")
+    txid = (data.get("txid") or "").strip()
+    memo = (data.get("memo") or "").strip()
+
+    if not order_id or not txid or not memo:
+        return jsonify(error="order_id, txid, and memo are required"), 400
+    if not re.fullmatch(r"[a-fA-F0-9]{64}", txid):
+        return jsonify(error="txid must be a 64-char hex string"), 400
+
+    with get_db() as conn:
+        order = conn.execute(
+            "SELECT * FROM orders WHERE id = ? AND user_id = ? AND provider = 'zcash'",
+            (order_id, user["id"]),
+        ).fetchone()
+        if not order:
+            return jsonify(error="Zcash order not found for this user"), 404
+        if order["status"] == "paid":
+            return jsonify(ok=True, already_paid=True, tx_hash=order["tx_hash"]), 200
+        if (order["payment_memo"] or "").strip() != memo:
+            return jsonify(error=f"Memo mismatch: order has {order['payment_memo']}, you sent {memo}"), 400
+
+        conn.execute(
+            "UPDATE orders SET status='paid', tx_hash=? WHERE id=?",
+            (txid, order_id),
+        )
+
+    return jsonify(
+        ok=True,
+        order_id=order_id,
+        tx_hash=txid,
+        memo=memo,
+        note="Manually confirmed. CipherPay testnet scanner does not yet support Ironwood pool detection.",
+    ), 200
 
 
 if __name__ == "__main__":
