@@ -16,7 +16,6 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
-# ---------- Postgres driver (psycopg3 preferred, psycopg2 fallback) ----------
 HAS_PG = False
 PG_DRIVER = None
 PG_INTEGRITY_ERROR = type("PGIntegrityError", (Exception,), {})
@@ -85,7 +84,6 @@ CUSTOM_ITEMS = [("Rice (kg)",2),("Beans (kg)",2),("Frozen beef (kg)",7),("Frozen
 CUSTOM_PRICE = dict(CUSTOM_ITEMS)
 
 
-# ---------- DB layer ----------
 class DBWrapper:
     def __init__(self, conn, is_pg: bool):
         self._conn = conn
@@ -208,7 +206,6 @@ def valid_stellar_g_address(value: str) -> bool:
     return bool(re.fullmatch(r"G[A-Z2-7]{55}", value or ""))
 
 
-# ---------- Routes ----------
 @app.get("/health")
 def health():
     return jsonify(
@@ -469,7 +466,6 @@ def confirm_pollar_payment():
     return jsonify(ok=True, paid=True, message=message, tx_hash=tx_hash)
 
 
-# ---------- Zcash / CipherPay ----------
 @app.post("/api/zcash/create-invoice")
 def zcash_create_invoice():
     user = current_user()
@@ -512,6 +508,8 @@ def zcash_create_invoice():
 
     memo = inv.get("memo_code") or inv.get("memo")
     invoice_id = inv.get("invoice_id") or inv.get("id")
+    checkout_url = inv.get("checkout_url") or (f"{CIPHERPAY_CHECKOUT_BASE}/pay/{invoice_id}" if invoice_id else None)
+
     with get_db() as conn:
         conn.execute(
             "UPDATE orders SET provider='zcash', payment_memo=? WHERE id=?",
@@ -526,7 +524,7 @@ def zcash_create_invoice():
         zcash_uri=inv.get("zcash_uri") or inv.get("payment_uri"),
         payment_address=inv.get("payment_address") or inv.get("address"),
         expires_at=inv.get("expires_at"),
-        checkout_url=f"{CIPHERPAY_CHECKOUT_BASE}/invoice/{invoice_id}",
+        checkout_url=checkout_url,
     )
 
 
@@ -550,6 +548,7 @@ def zcash_webhook():
     inv = event.get("invoice") or event.get("data") or {}
     memo = inv.get("memo_code") or inv.get("memo") or event.get("memo_code")
     status = (inv.get("status") or event.get("status") or "").upper()
+    txid = inv.get("txid") or inv.get("tx_hash") or event.get("txid")
 
     if etype not in ("invoice.confirmed", "invoice.expired", "invoice.cancelled"):
         return jsonify(ok=True, ignored=True), 200
@@ -568,8 +567,8 @@ def zcash_webhook():
             if order["status"] == "paid":
                 return jsonify(ok=True, already_paid=True), 200
             conn.execute(
-                "UPDATE orders SET status='paid', provider='zcash' WHERE id=? AND status='pending'",
-                (order["id"],),
+                "UPDATE orders SET status='paid', provider='zcash', tx_hash=? WHERE id=? AND status='pending'",
+                (txid, order["id"]),
             )
         elif etype in ("invoice.expired", "invoice.cancelled"):
             conn.execute(
