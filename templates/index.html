@@ -1,0 +1,139 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>FoodSub – Fresh, naturally preserved food packages</title>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:wght@600;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{--g:#2f7d32;--g2:#6abf4b;--gd:#173f1b;--wood:#a9744f;--cream:#faf6ee;--ink:#1d2a1e;--card:#fff}
+*{box-sizing:border-box;margin:0}html{scroll-behavior:smooth}
+body{font-family:Inter,sans-serif;background:var(--cream);color:var(--ink)}
+h1,h2,h3{font-family:Fraunces,serif}
+nav{position:fixed;inset:0 0 auto;z-index:20;display:flex;justify-content:space-between;align-items:center;padding:14px 5vw;background:rgba(250,246,238,.85);backdrop-filter:blur(10px);border-bottom:1px solid #0001}
+.logo{font:800 1.5rem Fraunces;color:var(--g)}.logo span{color:var(--wood)}
+nav a{color:var(--ink);text-decoration:none;margin:0 12px;font-weight:500;font-size:.95rem}
+.btn{background:var(--g);color:#fff;border:0;padding:12px 24px;border-radius:99px;font-weight:600;cursor:pointer;transition:.2s}.btn:hover{background:var(--gd);transform:translateY(-2px)}
+.btn.o{background:none;color:var(--g);border:2px solid var(--g)}
+.hero{min-height:100vh;display:grid;grid-template-columns:1fr 1fr;align-items:center;padding:100px 5vw 40px;background:radial-gradient(circle at 80% 30%,#dff3d2,transparent 55%),var(--cream)}
+.hero h1{font-size:clamp(2.4rem,5vw,4.2rem);line-height:1.05;color:var(--gd)}.hero h1 em{color:var(--g);font-style:normal}
+.hero p{margin:20px 0 28px;font-size:1.1rem;max-width:520px;line-height:1.6}
+#c3d{width:100%;height:520px}
+.pills{display:flex;flex-wrap:wrap;gap:8px;margin-top:22px}.pill{background:#fff;border:1px solid #2f7d3233;color:var(--g);padding:6px 14px;border-radius:99px;font-size:.82rem;font-weight:600}
+section{padding:80px 5vw}.sec-h{text-align:center;margin-bottom:40px}.sec-h h2{font-size:2.3rem;color:var(--gd)}.sec-h p{opacity:.7;margin-top:8px}
+.pres{background:var(--gd);color:#fff}.pres h2{color:#fff}
+.grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:20px}
+.pc{padding:26px;border-radius:20px;background:#ffffff12;border:1px solid #ffffff22}.pc b{font-size:2rem}.pc h3{margin:10px 0 6px}.pc p{opacity:.8;font-size:.92rem;line-height:1.5}
+.tabs{display:flex;gap:8px;justify-content:center;flex-wrap:wrap;margin-bottom:30px}
+.tab{padding:9px 20px;border-radius:99px;border:1px solid #0002;background:#fff;cursor:pointer;font-weight:600}.tab.on{background:var(--g);color:#fff}
+.card{background:var(--card);border-radius:24px;padding:24px;box-shadow:0 10px 30px #0001;transition:transform .15s;transform-style:preserve-3d;position:relative;overflow:hidden}
+.card:before{content:"";position:absolute;inset:0 0 auto;height:6px;background:linear-gradient(90deg,var(--g),var(--wood))}
+.card .bd{display:inline-block;background:#e8f5e0;color:var(--g);font-size:.75rem;font-weight:700;padding:4px 12px;border-radius:99px}
+.card h3{font-size:1.4rem;margin:12px 0 2px}.card .sub{opacity:.65;font-size:.9rem}
+.price{font:800 2.2rem Fraunces;color:var(--gd);margin:12px 0}.price small{font:500 .9rem Inter;opacity:.6}
+.card ul{list-style:none;padding:0;margin:0 0 18px;font-size:.88rem}.card li{padding:5px 0;border-bottom:1px dashed #0001}.card li:before{content:"✓ ";color:var(--g);font-weight:700}
+.card .btn{width:100%}
+.tags{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px}.tags i{font-style:normal;font-size:.7rem;background:var(--cream);padding:3px 9px;border-radius:6px;color:var(--wood);font-weight:700}
+.tool{display:grid;grid-template-columns:1fr 1fr;gap:30px;max-width:1000px;margin:auto}
+.box{background:#fff;border-radius:24px;padding:28px;box-shadow:0 10px 30px #0001}
+.row{display:flex;justify-content:space-between;align-items:center;padding:8px 0;border-bottom:1px dashed #0001;font-size:.92rem}
+.row input{width:64px;padding:6px;border:1px solid #0003;border-radius:8px}
+input,select{font:inherit}.fld{width:100%;padding:12px;border:1px solid #0003;border-radius:12px;margin:6px 0}
+.why{background:linear-gradient(#fff,#eef7e6)}.why .pc{background:#fff;border:1px solid #0001;color:var(--ink)}
+.modal{position:fixed;inset:0;background:#000a;display:none;place-items:center;z-index:50}.modal.on{display:grid}
+.mb{background:#fff;padding:32px;border-radius:24px;width:min(400px,92vw)}.mb h3{margin-bottom:12px}
+#toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--gd);color:#fff;padding:14px 24px;border-radius:14px;display:none;z-index:99;max-width:90vw}
+footer{background:var(--gd);color:#fff9;text-align:center;padding:40px}
+.reveal{opacity:0;transform:translateY(30px);transition:.7s}.reveal.in{opacity:1;transform:none}
+@media(max-width:850px){.hero,.tool{grid-template-columns:1fr}#c3d{height:320px}nav a{display:none}}
+.nav-actions{display:flex;align-items:center;gap:10px}.testnet-note{max-width:900px;margin:0 auto 24px;text-align:center;color:#446348;font-size:.88rem;background:#eef7e6;padding:12px 16px;border-radius:12px}.pollar-nav-btn{border:1px solid #2f7d32;background:#173f1b;color:#fff;padding:9px 15px;border-radius:99px;cursor:pointer;font-weight:700;font:600 .86rem Inter,sans-serif}.pollar-nav-btn.connected{background:#e8f5e0;color:#173f1b}.pollar-overlay{position:fixed;inset:0;z-index:1000;background:#071a0dcc;display:grid;place-items:center;padding:18px}.pollar-dialog{position:relative;width:min(480px,100%);max-height:90vh;overflow:auto;background:#fff;border-radius:22px;padding:28px;box-shadow:0 25px 90px #0005}.pollar-dialog h2{font:800 1.65rem Fraunces;color:#173f1b;margin:0 0 8px}.pollar-dialog p{line-height:1.55;color:#526052;margin:8px 0}.pollar-close{position:absolute;right:16px;top:14px;border:0;background:#eef5eb;border-radius:50%;width:34px;height:34px;font-size:20px;cursor:pointer}.pollar-meta{background:#f3f8ef;border-radius:14px;padding:14px;margin:16px 0}.pollar-meta strong{color:#173f1b}.pollar-action{width:100%;border:0;border-radius:99px;background:#2f7d32;color:#fff;padding:13px 18px;font-weight:700;cursor:pointer;margin-top:10px}.pollar-action:disabled{opacity:.5;cursor:not-allowed}.pollar-secondary{width:100%;border:1px solid #2f7d32;border-radius:99px;background:#fff;color:#2f7d32;padding:12px 18px;font-weight:700;cursor:pointer;margin-top:10px}.pollar-address{font:12px ui-monospace,monospace;word-break:break-all;background:#f5f5f5;padding:10px;border-radius:9px}.pollar-status{font-size:.9rem;background:#eef7e6;border-left:4px solid #2f7d32;border-radius:8px;padding:11px;margin-top:12px}.pollar-error{background:#fff1ed;border-left-color:#c33;color:#7d2118}.pollar-label{font-size:.78rem;text-transform:uppercase;letter-spacing:.06em;color:#657565;font-weight:700}.pollar-note{font-size:.78rem!important;color:#687568!important}.pollar-widget-anchor{display:contents}@media(max-width:850px){.nav-actions{gap:6px}.pollar-nav-btn{font-size:.75rem;padding:8px 10px}}
+</style></head><body>
+<nav><div class="logo">Food<span>Sub</span></div>
+<div><a href="#packages">Packages</a><a href="#preserve">Preservation</a><a href="#build">Custom &amp; Calculator</a><a href="#why">Why us</a></div>
+<div class="nav-actions"><div id="auth"></div><div id="pollar-root"></div></div></nav>
+
+<header class="hero"><div>
+<h1>Real food, <em>kept real</em>.<br>Delivered to your door.</h1>
+<p>FoodSub packs rice, beans, frozen beef &amp; chicken, eggs, spaghetti, spices, oil, drinks and fresh-cut mini-processed vegetables into packages made for how you actually live — students, singles, families and gifts.</p>
+<button class="btn" onclick="location.href='#packages'">Browse packages</button> <button class="btn o" onclick="location.href='#preserve'">How we preserve</button>
+<div class="pills"><span class="pill">🌿 100% Natural Preservation</span><span class="pill">❄️ Cold-chain Frozen</span><span class="pill">🚫 No Added Chemicals</span><span class="pill">🥚 Farm Fresh</span><span class="pill">🌾 Sorted &amp; Cleaned</span></div></div>
+<canvas id="c3d"></canvas></header>
+
+<section class="pres" id="preserve"><div class="sec-h"><h2>Natural preservation. Nothing hidden.</h2><p style="opacity:.8">We keep food fresh with temperature, air and time – not artificial preservatives.</p></div>
+<div class="grid">
+<div class="pc reveal"><b>❄️</b><h3>Flash-freezing</h3><p>Beef and chicken are chilled fast and held at a steady -18°C or colder, locking in texture and nutrients with zero additives.</p></div>
+<div class="pc reveal"><b>📦</b><h3>Vacuum sealing</h3><p>Removing air slows spoilage naturally, so proteins and mini-processed veg stay fresher for longer.</p></div>
+<div class="pc reveal"><b>☀️</b><h3>Gentle drying</h3><p>Grains, beans and spices are dried and stored cool and dry – the oldest natural preservation method there is.</p></div>
+<div class="pc reveal"><b>🥕</b><h3>Mini-processed, not ultra-processed</h3><p>Vegetables are washed, cut and blended or portioned only – kept cold, never loaded with synthetic preservatives.</p></div>
+<div class="pc reveal"><b>🌡️</b><h3>Cold-chain delivery</h3><p>Insulated packaging keeps frozen items cold from our store to your kitchen.</p></div></div></section>
+
+<section id="packages"><div class="sec-h"><h2>Pick your package</h2><p>No account needed to look around. Create one when you're ready to buy.</p></div>
+<p class="testnet-note">Hackathon demo: checkout settles in Stellar testnet XLM using a fixed 1 USD = 1 XLM demonstration rate. Testnet assets have no real-world value.</p><div class="tabs" id="tabs"></div><div class="grid" id="pk" style="grid-template-columns:repeat(auto-fit,minmax(300px,1fr))"></div></section>
+
+<section id="build" style="background:#fff"><div class="sec-h"><h2>Build it your way</h2><p>Customise a package, or let the portion calculator suggest one.</p></div>
+<div class="tool"><div class="box"><h3>🛒 Customised package</h3><div id="cust"></div><div class="price" id="ctot">$0</div><button class="btn" onclick="buy('custom')">Buy custom package</button></div>
+<div class="box"><h3>🍽️ Portion calculator</h3><p style="opacity:.7;margin:6px 0 14px;font-size:.9rem">How many people are you feeding?</p>
+<input class="fld" id="ppl" type="number" min="1" value="4" oninput="calc()"><select class="fld" id="wks" onchange="calc()"><option value="1">1 week</option><option value="2">2 weeks</option><option value="4" selected>1 month</option></select>
+<div id="cres"></div></div></div></section>
+
+<section class="why" id="why"><div class="sec-h"><h2>Why choose FoodSub?</h2></div>
+<div class="grid"><div class="pc reveal"><b>🎯</b><h3>Made for your lifestyle</h3><p>Every package is filled with what people like you actually cook.</p></div>
+<div class="pc reveal"><b>💸</b><h3>Bulk value</h3><p>Bundle pricing beats buying item by item.</p></div>
+<div class="pc reveal"><b>🌿</b><h3>Transparent sourcing</h3><p>Badges tell you exactly what you're getting.</p></div>
+<div class="pc reveal"><b>🚚</b><h3>Delivered cold</h3><p>Frozen stays frozen from our store to your door.</p></div>
+<div class="pc reveal"><b>🔒</b><h3>Secure payments</h3><p>Checkout is integrated with Pollar on Stellar testnet.</p></div></div></section>
+<footer>© 2026 FoodSub · Fresh, natural, delivered.</footer>
+
+<div class="modal" id="md" onclick="if(event.target==this)this.classList.remove('on')"><div class="mb">
+<h3 id="mt">Create your account</h3><input class="fld" id="nm" placeholder="Full name"><input class="fld" id="em" placeholder="Email" type="email"><input class="fld" id="pw" placeholder="Password (6+ chars)" type="password">
+<button class="btn" style="width:100%" onclick="doAuth()" id="mgo">Sign up</button><p style="margin-top:12px;font-size:.85rem;text-align:center"><a href="#" onclick="swap();return false" id="msw">Have an account? Log in</a></p></div></div>
+<div id="toast"></div>
+<script>window.FOODSUB_CONFIG = {{ foodsub_config|tojson }};</script>
+{% if pollar_bundle_exists %}<link rel="stylesheet" href="{{ url_for('static', filename='pollar/pollar-widget.css') }}">
+<script type="module" src="{{ url_for('static', filename='pollar/pollar-widget.js') }}"></script>{% endif %}
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+let D,USER=null,MODE='reg',PENDING=null,FILT='all',CART={};
+const $=s=>document.querySelector(s),api=(u,b)=>fetch(u,b?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}:{}).then(r=>r.json());
+const toast=t=>{const e=$('#toast');e.textContent=t;e.style.display='block';setTimeout(()=>e.style.display='none',5000)};window.foodSubToast=toast;
+function authUI(){$('#auth').innerHTML=USER?`<span style="font-size:.9rem">Hi, ${USER.name.split(' ')[0]}</span> <button class="btn o" style="padding:6px 16px" onclick="api('/api/logout',{}).then(()=>{USER=null;authUI()})">Log out</button>`:`<button class="btn" onclick="openM('reg')">Sign up / Log in</button>`}
+function openM(m){MODE=m;$('#md').classList.add('on');setM()}
+function swap(){MODE=MODE=='reg'?'log':'reg';setM()}
+function setM(){const r=MODE=='reg';$('#nm').style.display=r?'block':'none';$('#mt').textContent=r?'Create your account':'Welcome back';$('#mgo').textContent=r?'Sign up':'Log in';$('#msw').textContent=r?'Have an account? Log in':'New here? Sign up'}
+async function doAuth(){const r=await api(MODE=='reg'?'/api/register':'/api/login',{name:$('#nm').value,email:$('#em').value,password:$('#pw').value});
+ if(r.error)return toast(r.error);USER={name:r.name};authUI();$('#md').classList.remove('on');toast('Welcome to FoodSub!');if(PENDING){const p=PENDING;PENDING=null;buy(p)}}
+async function buy(id){if(!USER){PENDING=id;toast('Create an account to buy a package');return openM('reg')}
+ const r=await api('/api/checkout',{package:id,cart:CART});
+ if(r.error)return toast(r.error);
+ window.dispatchEvent(new CustomEvent('foodsub:pollar:checkout',{detail:r}));
+}
+function render(){const tabs=[['all','All'],['students','Students'],['singles','Single ladies'],['family','Families'],['gift','Gifts']];
+ $('#tabs').innerHTML=tabs.map(t=>`<div class="tab ${FILT==t[0]?'on':''}" onclick="FILT='${t[0]}';render()">${t[1]}</div>`).join('');
+ $('#pk').innerHTML=D.packages.filter(p=>FILT=='all'||p.tag==FILT).map(p=>`<div class="card tilt reveal in"><span class="bd">${p.badge}</span><h3>${p.name}</h3><div class="sub">${p.hero}</div>
+ <div class="tags"><i>NATURALLY PRESERVED</i><i>NO ADDED CHEMICALS</i></div><div class="price">$${p.price}<small> / package</small></div><ul>${p.items.map(i=>`<li>${i}</li>`).join('')}</ul>
+ <button class="btn" onclick="buy('${p.id}')">Buy this package</button></div>`).join('');
+ document.querySelectorAll('.tilt').forEach(c=>{c.onmousemove=e=>{const r=c.getBoundingClientRect(),x=(e.clientX-r.left)/r.width-.5,y=(e.clientY-r.top)/r.height-.5;c.style.transform=`perspective(800px) rotateY(${x*8}deg) rotateX(${-y*8}deg) translateY(-4px)`};c.onmouseleave=()=>c.style.transform=''})}
+function custUI(){$('#cust').innerHTML=D.custom.map(([n,p])=>`<div class="row"><span>${n} <small style="opacity:.5">$${p}</small></span><input type="number" min="0" value="0" oninput="CART['${n}']=+this.value;tot()"></div>`).join('')}
+function tot(){let t=0;D.custom.forEach(([n,p])=>t+=(CART[n]||0)*p);$('#ctot').textContent='$'+t}
+function calc(){const n=+$('#ppl').value||1,w=+$('#wks').value,k=n*w;
+ const L=[['Rice',(.5*k).toFixed(1)+' kg'],['Beans',(.2*k).toFixed(1)+' kg'],['Frozen chicken/beef',(.45*k).toFixed(1)+' kg'],['Eggs',Math.ceil(3.5*k)],['Spaghetti',(.25*k).toFixed(1)+' kg'],['Cooking oil',(.1*k).toFixed(1)+' L']];
+ const rec=n<=1?'Solo Queen or Campus package':n<=4?'Squad of 4 or Family Table (Small)':'Family Feast (Large)';
+ $('#cres').innerHTML=L.map(x=>`<div class="row"><span>${x[0]}</span><b>${x[1]}</b></div>`).join('')+`<p style="margin-top:14px;color:var(--g);font-weight:600">Suggested: ${rec}</p>`}
+const io=new IntersectionObserver(e=>e.forEach(x=>x.isIntersecting&&x.target.classList.add('in')),{threshold:.15});
+(async()=>{D=await api('/api/packages');USER=(await api('/api/me')).user;authUI();render();custUI();calc();document.querySelectorAll('.reveal').forEach(e=>io.observe(e));
+ })();
+
+// ---------- 3D animated food (Three.js) ----------
+(()=>{const cv=$('#c3d'),R=new THREE.WebGLRenderer({canvas:cv,alpha:true,antialias:true}),S=new THREE.Scene(),C=new THREE.PerspectiveCamera(45,1,.1,100);C.position.z=9;
+ S.add(new THREE.AmbientLight(0xffffff,.8));const L=new THREE.DirectionalLight(0xffffff,.9);L.position.set(4,6,6);S.add(L);
+ const M=c=>new THREE.MeshStandardMaterial({color:c,roughness:.45}),G=new THREE.Group();S.add(G),items=[];
+ const add=(m,x,y,z,s)=>{m.position.set(x,y,z);m.scale.setScalar(s);m.userData={y0:y,ph:Math.random()*6};G.add(m);items.push(m)};
+ const tom=new THREE.Mesh(new THREE.SphereGeometry(1,32,32),M(0xe5352b));const lf=new THREE.Mesh(new THREE.ConeGeometry(.45,.4,6),M(0x2f9e44));lf.position.y=1;tom.add(lf);add(tom,-2.6,1.4,0,.9);
+ const car=new THREE.Mesh(new THREE.ConeGeometry(.5,2.2,24),M(0xff8a1f));car.rotation.z=2.5;add(car,2.8,1.6,0,1);
+ const egg=new THREE.Mesh(new THREE.SphereGeometry(1,32,32),M(0xf6e7c8));egg.scale.set(.75,1,.75);add(egg,0,.2,1.2,1.1);
+ const btl=new THREE.Mesh(new THREE.CylinderGeometry(.45,.55,2,24),M(0x7cc94b));add(btl,-2.9,-1.6,.5,.9);
+ const pas=new THREE.Mesh(new THREE.TorusKnotGeometry(.7,.22,100,12),M(0xf2c14e));add(pas,2.6,-1.4,.5,.9);
+ const meat=new THREE.Mesh(new THREE.BoxGeometry(1.6,.8,1.1),M(0xb3262e));add(meat,0,-2.2,0,.9);
+ const rice=new THREE.Mesh(new THREE.SphereGeometry(1,24,12,0,6.3,0,1.6),M(0xfffaf0));rice.rotation.x=3.14;add(rice,0,2.4,-1,.8);
+ function rs(){const w=cv.clientWidth,h=cv.clientHeight;R.setSize(w,h,false);C.aspect=w/h;C.updateProjectionMatrix();R.setPixelRatio(devicePixelRatio)}rs();addEventListener('resize',rs);
+ let mx=0,my=0;addEventListener('mousemove',e=>{mx=e.clientX/innerWidth-.5;my=e.clientY/innerHeight-.5});
+ (function loop(t){requestAnimationFrame(loop);t/=1000;items.forEach(m=>{m.rotation.y+=.012;m.rotation.x+=.004;m.position.y=m.userData.y0+Math.sin(t*1.2+m.userData.ph)*.25});
+ G.rotation.y+=(mx*.8-G.rotation.y)*.05;G.rotation.x+=(my*.5-G.rotation.x)*.05;R.render(S,C)})(0)})();
+</script></body></html>

@@ -1,0 +1,9 @@
+.env
+foodsub.db
+__pycache__/
+*.pyc
+.venv/
+venv/
+frontend/node_modules/
+static/pollar/
+.DS_Store
