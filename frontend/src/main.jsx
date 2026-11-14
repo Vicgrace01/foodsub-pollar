@@ -8,9 +8,9 @@ import './pollar.css';
 const config = window.FOODSUB_CONFIG || {};
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-const SEND_TIMEOUT_MS = 120000;   // hard ceiling on the send call
-const HASH_WAIT_MS   = 30000;     // wait for hash after 'pending'
-const VERIFY_TIMEOUT_MS = 45000;  // backend verification window
+const SEND_TIMEOUT_MS = 120000;
+const HASH_WAIT_MS   = 30000;
+const VERIFY_TIMEOUT_MS = 45000;
 
 function shortAddress(a) {
   return a ? `${a.slice(0, 7)}…${a.slice(-6)}` : '';
@@ -39,14 +39,13 @@ function PollarExperience() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [walletBusy, setWalletBusy] = useState(false);
-  const [success, setSuccess] = useState(null); // { orderId, txHash }
+  const [success, setSuccess] = useState(null);
   const [stage, setStage] = useState('');
 
   const createStarted = useRef(false);
   const attemptRef = useRef(0);
   const txHashRef = useRef(null);
   const checkoutRef = useRef(null);
-  const settledRef = useRef(false);
 
   const merchantAddress = config.pollarMerchantAddress || '';
   const publishableKeyReady = Boolean(config.pollarPublishableKey);
@@ -56,7 +55,6 @@ function PollarExperience() {
     wallet?.existsOnStellar !== false &&
     (!wallet?.provisioning || wallet.provisioning === 'READY');
 
-  /* ---------- checkout open ---------- */
   useEffect(() => {
     const onOpen = (e) => {
       const payload = e.detail || null;
@@ -65,14 +63,12 @@ function PollarExperience() {
       setStatus(''); setError(''); setSuccess(null);
       setBusy(false); setStage('');
       txHashRef.current = null;
-      settledRef.current = false;
       attemptRef.current++;
     };
     window.addEventListener('foodsub:pollar:checkout', onOpen);
     return () => window.removeEventListener('foodsub:pollar:checkout', onOpen);
   }, []);
 
-  /* ---------- transaction state machine (the real progress source) ---------- */
   useEffect(() => {
     let unsub;
     try {
@@ -111,7 +107,6 @@ function PollarExperience() {
     return () => { try { unsub && unsub(); } catch { /* noop */ } };
   }, [getClient]);
 
-  /* ---------- wallet auto-create ---------- */
   useEffect(() => {
     if (!isAuthenticated || walletReady || createStarted.current || typeof createWallet !== 'function') return;
     if (hasWallet === false || hasWallet === undefined) {
@@ -126,7 +121,20 @@ function PollarExperience() {
 
   useEffect(() => { if (!isAuthenticated) createStarted.current = false; }, [isAuthenticated]);
 
-  /* ---------- helpers ---------- */
+  // Sync FoodSub logout → Pollar logout
+  useEffect(() => {
+    const onFoodsubLogout = () => {
+      attemptRef.current++;
+      setCheckout(null); checkoutRef.current = null;
+      setStatus(''); setError(''); setStage(''); setSuccess(null);
+      setBusy(false); setWalletBusy(false);
+      createStarted.current = false;
+      try { if (typeof logout === 'function') logout(); } catch (e) { console.warn('Pollar logout', e); }
+    };
+    window.addEventListener('foodsub:logout', onFoodsubLogout);
+    return () => window.removeEventListener('foodsub:logout', onFoodsubLogout);
+  }, [logout]);
+
   const waitForHash = useCallback(async (deadlineMs) => {
     const end = Date.now() + deadlineMs;
     while (Date.now() < end) {
@@ -175,7 +183,6 @@ function PollarExperience() {
     } finally { setWalletBusy(false); }
   }
 
-  /* ---------- pay ---------- */
   async function payWithPollar() {
     setError(''); setStatus(''); setSuccess(null);
     const order = checkoutRef.current;
@@ -188,7 +195,6 @@ function PollarExperience() {
     if (network !== 'testnet') { setError('Only Stellar testnet is supported in this build.'); return; }
 
     const attempt = ++attemptRef.current;
-    settledRef.current = false;
     txHashRef.current = null;
     setBusy(true);
     setStage('Opening Pollar confirmation…');
@@ -203,8 +209,8 @@ function PollarExperience() {
     try {
       const call =
         typeof runTx === 'function'
-          ? runTx('payment', params, opts)                       // documented Stellar one-shot
-          : sendPayment({ ...params, chain: 'STELLAR', options: opts }); // fallback
+          ? runTx('payment', params, opts)
+          : sendPayment({ ...params, chain: 'STELLAR', options: opts });
 
       const outcome = await Promise.race([
         Promise.resolve(call),
@@ -252,7 +258,6 @@ function PollarExperience() {
       const result = await verifyWithBackend(order, txHashRef.current, walletAddress);
       if (attempt !== attemptRef.current) return;
 
-      settledRef.current = true;
       setSuccess({ orderId: order.order_id, txHash: txHashRef.current });
       setStatus(result.message || 'Payment verified.');
       setStage('');

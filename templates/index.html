@@ -113,7 +113,8 @@ footer{background:var(--gd);color:#fff9;text-align:center;padding:40px}
 let D,USER=null,MODE='reg',PENDING=null,FILT='all',CART={};
 const $=s=>document.querySelector(s),api=(u,b)=>fetch(u,b?{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(b)}:{}).then(r=>r.json());
 const toast=t=>{const e=$('#toast');e.textContent=t;e.style.display='block';setTimeout(()=>e.style.display='none',5000)};window.foodSubToast=toast;
-function authUI(){$('#auth').innerHTML=USER?`<span style="font-size:.9rem">Hi, ${USER.name.split(' ')[0]}</span> <button class="btn o" style="padding:6px 16px" onclick="api('/api/logout',{}).then(()=>{USER=null;authUI()})">Log out</button>`:`<button class="btn" onclick="openM('reg')">Sign up / Log in</button>`}
+function authUI(){$('#auth').innerHTML=USER?`<span style="font-size:.9rem">Hi, ${USER.name.split(' ')[0]}</span> <button class="btn o" style="padding:6px 16px" onclick="doLogout()">Log out</button>`:`<button class="btn" onclick="openM('reg')">Sign up / Log in</button>`}
+async function doLogout(){await api('/api/logout',{});USER=null;authUI();window.dispatchEvent(new CustomEvent('foodsub:logout'))}
 function openM(m){MODE=m;$('#md').classList.add('on');setM()}
 function swap(){MODE=MODE=='reg'?'log':'reg';setM()}
 function setM(){const r=MODE=='reg';$('#nm').style.display=r?'block':'none';$('#mt').textContent=r?'Create your account':'Welcome back';$('#mgo').textContent=r?'Sign up':'Log in';$('#msw').textContent=r?'Have an account? Log in':'New here? Sign up'}
@@ -138,6 +139,7 @@ function calc(){const n=+$('#ppl').value||1,w=+$('#wks').value,k=n*w;
  $('#cres').innerHTML=L.map(x=>`<div class="row"><span>${x[0]}</span><b>${x[1]}</b></div>`).join('')+`<p style="margin-top:14px;color:var(--g);font-weight:600">Suggested: ${rec}</p>`}
 const io=new IntersectionObserver(e=>e.forEach(x=>x.isIntersecting&&x.target.classList.add('in')),{threshold:.15});
 (async()=>{D=await api('/api/packages');USER=(await api('/api/me')).user;authUI();render();custUI();calc();document.querySelectorAll('.reveal').forEach(e=>io.observe(e));
+ if(!USER)window.dispatchEvent(new CustomEvent('foodsub:logout'));
  })();
 
 // ---------- 3D animated food (Three.js) ----------

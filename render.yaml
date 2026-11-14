@@ -2,17 +2,17 @@ services:
   - type: web
     name: foodsub-pollar
     runtime: python
-    plan: starter
+    plan: free
     buildCommand: pip install -r requirements.txt && cd frontend && npm install && npm run build
     startCommand: gunicorn app:app --bind 0.0.0.0:$PORT --workers 1 --threads 4 --timeout 120
-    disk:
-      name: foodsub-data
-      mountPath: /var/data
-      sizeGB: 1
     envVars:
       - key: POLLAR_PUBLISHABLE_KEY
         sync: false
       - key: POLLAR_MERCHANT_ADDRESS
+        sync: false
+      - key: DATABASE_URL
+        sync: false
+      - key: FLASK_SECRET_KEY
         sync: false
       - key: POLLAR_NETWORK
         value: testnet
@@ -20,9 +20,5 @@ services:
         value: https://horizon-testnet.stellar.org
       - key: DEMO_XLM_PER_USD
         value: "1"
-      - key: FLASK_SECRET_KEY
-        generateValue: true
       - key: COOKIE_SECURE
         value: "true"
-      - key: DATABASE_PATH
-        value: /var/data/foodsub.db

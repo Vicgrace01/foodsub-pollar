@@ -4,7 +4,6 @@ import os
 import re
 import secrets
 import sqlite3
-import time
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -14,9 +13,19 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
+try:
+    import psycopg2
+    import psycopg2.extras
+    PG_INTEGRITY_ERROR = psycopg2.IntegrityError
+    HAS_PSYCOPG2 = True
+except ImportError:
+    PG_INTEGRITY_ERROR = type("PGIntegrityError", (Exception,), {})
+    HAS_PSYCOPG2 = False
+
 BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR / ".env")
 
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 DB_PATH = os.getenv("DATABASE_PATH", str(BASE_DIR / "foodsub.db"))
 POLLAR_PUBLISHABLE_KEY = os.getenv("POLLAR_PUBLISHABLE_KEY", "").strip()
 POLLAR_MERCHANT_ADDRESS = os.getenv("POLLAR_MERCHANT_ADDRESS", "").strip()
@@ -51,39 +60,97 @@ CUSTOM_ITEMS = [("Rice (kg)",2),("Beans (kg)",2),("Frozen beef (kg)",7),("Frozen
 CUSTOM_PRICE = dict(CUSTOM_ITEMS)
 
 
-def get_db() -> sqlite3.Connection:
+# ---------- DB layer ----------
+class DBWrapper:
+    def __init__(self, conn, is_pg: bool):
+        self._conn = conn
+        self._is_pg = is_pg
+
+    def execute(self, sql, params=()):
+        if self._is_pg:
+            sql = sql.replace("?", "%s")
+            cur = self._conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        else:
+            cur = self._conn.cursor()
+        cur.execute(sql, params)
+        return cur
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        try:
+            if exc_type is None:
+                self._conn.commit()
+            else:
+                self._conn.rollback()
+        finally:
+            self._conn.close()
+
+
+def get_db():
+    if DATABASE_URL:
+        if not HAS_PSYCOPG2:
+            raise RuntimeError("DATABASE_URL is set but psycopg2-binary is not installed.")
+        return DBWrapper(psycopg2.connect(DATABASE_URL), is_pg=True)
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(DB_PATH, timeout=20)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA foreign_keys = ON")
-    return conn
+    c = sqlite3.connect(DB_PATH, timeout=20)
+    c.row_factory = sqlite3.Row
+    c.execute("PRAGMA foreign_keys = ON")
+    return DBWrapper(c, is_pg=False)
 
 
 def init_db() -> None:
     with get_db() as conn:
-        conn.execute("""CREATE TABLE IF NOT EXISTS users (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL,
-            email TEXT NOT NULL UNIQUE,
-            pw TEXT NOT NULL
-        )""")
-        conn.execute("""CREATE TABLE IF NOT EXISTS orders (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER NOT NULL,
-            package TEXT NOT NULL,
-            amount INTEGER NOT NULL,
-            status TEXT NOT NULL DEFAULT 'pending',
-            created TEXT DEFAULT CURRENT_TIMESTAMP,
-            provider TEXT DEFAULT 'pollar',
-            tx_hash TEXT UNIQUE,
-            payer_address TEXT,
-            payment_memo TEXT,
-            FOREIGN KEY(user_id) REFERENCES users(id)
-        )""")
-        existing = {row[1] for row in conn.execute("PRAGMA table_info(orders)").fetchall()}
-        for name, sql_type in (("provider", "TEXT DEFAULT 'pollar'"), ("tx_hash", "TEXT"), ("payer_address", "TEXT"), ("payment_memo", "TEXT")):
+        if DATABASE_URL:
+            conn.execute("""CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL UNIQUE,
+                pw TEXT NOT NULL)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS orders (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NOT NULL REFERENCES users(id),
+                package TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                provider TEXT DEFAULT 'pollar',
+                tx_hash TEXT UNIQUE,
+                payer_address TEXT,
+                payment_memo TEXT)""")
+            cols = conn.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'orders'"
+            ).fetchall()
+            existing = {r["column_name"] for r in cols}
+        else:
+            conn.execute("""CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                email TEXT NOT NULL UNIQUE,
+                pw TEXT NOT NULL)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS orders (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                package TEXT NOT NULL,
+                amount INTEGER NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created TEXT DEFAULT CURRENT_TIMESTAMP,
+                provider TEXT DEFAULT 'pollar',
+                tx_hash TEXT UNIQUE,
+                payer_address TEXT,
+                payment_memo TEXT)""")
+            existing = {r[1] for r in conn.execute("PRAGMA table_info(orders)").fetchall()}
+
+        for name, sql_type in (
+            ("provider", "TEXT DEFAULT 'pollar'"),
+            ("tx_hash", "TEXT"),
+            ("payer_address", "TEXT"),
+            ("payment_memo", "TEXT"),
+        ):
             if name not in existing:
                 conn.execute(f"ALTER TABLE orders ADD COLUMN {name} {sql_type}")
+
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_tx_hash_unique ON orders(tx_hash) WHERE tx_hash IS NOT NULL")
         conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_payment_memo_unique ON orders(payment_memo) WHERE payment_memo IS NOT NULL")
 
@@ -113,9 +180,10 @@ def valid_stellar_g_address(value: str) -> bool:
     return bool(re.fullmatch(r"G[A-Z2-7]{55}", value or ""))
 
 
+# ---------- Routes ----------
 @app.get("/health")
 def health():
-    return jsonify(ok=True, network=POLLAR_NETWORK)
+    return jsonify(ok=True, network=POLLAR_NETWORK, db=("postgres" if DATABASE_URL else "sqlite"))
 
 
 @app.get("/")
@@ -148,10 +216,15 @@ def register():
         return jsonify(error="Enter a name, valid email and password with at least 6 characters"), 400
     try:
         with get_db() as conn:
-            cur = conn.execute("INSERT INTO users(name,email,pw) VALUES(?,?,?)", (name, email, generate_password_hash(password)))
-            session.clear()
-            session["uid"] = cur.lastrowid
-    except sqlite3.IntegrityError:
+            cur = conn.execute(
+                "INSERT INTO users(name,email,pw) VALUES(?,?,?) RETURNING id",
+                (name, email, generate_password_hash(password)),
+            )
+            row = cur.fetchone()
+            user_id = row["id"] if isinstance(row, dict) else row[0]
+        session.clear()
+        session["uid"] = user_id
+    except (sqlite3.IntegrityError, PG_INTEGRITY_ERROR):
         return jsonify(error="Email already registered"), 409
     return jsonify(ok=True, name=name)
 
@@ -192,7 +265,7 @@ def orders():
             "SELECT id, package, amount, status, created, provider, tx_hash FROM orders WHERE user_id = ? ORDER BY id DESC",
             (user["id"],),
         ).fetchall()
-    return jsonify(orders=[dict(row) for row in rows])
+    return jsonify(orders=[dict(r) for r in rows])
 
 
 @app.post("/api/checkout")
@@ -233,12 +306,16 @@ def checkout():
 
     if DEMO_XLM_PER_USD <= 0:
         return jsonify(error="Invalid demo XLM conversion rate in server configuration"), 500
+
     payment_memo = "FS" + secrets.token_hex(11)
     with get_db() as conn:
-        order_id = conn.execute(
-            "INSERT INTO orders(user_id,package,amount,status,provider,payment_memo) VALUES(?,?,?,?,?,?)",
+        cur = conn.execute(
+            "INSERT INTO orders(user_id,package,amount,status,provider,payment_memo) VALUES(?,?,?,?,?,?) RETURNING id",
             (user["id"], name, total, "pending", "pollar", payment_memo),
-        ).lastrowid
+        )
+        row = cur.fetchone()
+        order_id = row["id"] if isinstance(row, dict) else row[0]
+
     return jsonify(
         order_id=order_id,
         package=name,
@@ -265,11 +342,16 @@ def fetch_horizon_payment(tx_hash: str, expected: dict[str, str]) -> tuple[bool 
             return False, "Stellar reports that this transaction was not successful"
         if tx_data.get("memo_type") != "text" or tx_data.get("memo") != expected["memo"]:
             return False, "Transaction memo does not match this FoodSub order"
-        op_response = requests.get(f"{POLLAR_HORIZON_URL}/transactions/{tx_hash}/operations", params={"limit": 200, "order": "asc"}, timeout=12)
+        op_response = requests.get(
+            f"{POLLAR_HORIZON_URL}/transactions/{tx_hash}/operations",
+            params={"limit": 200, "order": "asc"},
+            timeout=12,
+        )
         op_response.raise_for_status()
         operations = op_response.json().get("_embedded", {}).get("records", [])
     except requests.RequestException:
         return None, "Unable to confirm the transaction with Stellar Horizon right now"
+
     for operation in operations:
         if operation.get("type") != "payment" or operation.get("asset_type") != "native":
             continue
@@ -303,7 +385,7 @@ def confirm_pollar_payment():
     tx_hash = str(data.get("tx_hash", "")).strip()
     payer = str(data.get("payer_address", "")).strip()
     if not valid_stellar_g_address(payer):
-        return jsonify(error="This checkout currently supports classic Stellar G-address wallets. Use Pollar email/social login or a compatible external Stellar wallet, not a passkey C-address."), 400
+        return jsonify(error="This checkout currently supports classic Stellar G-address wallets."), 400
 
     with get_db() as conn:
         order = conn.execute("SELECT * FROM orders WHERE id = ? AND user_id = ?", (order_id, user["id"])).fetchone()
@@ -330,8 +412,8 @@ def confirm_pollar_payment():
                 (tx_hash, payer, order_id, user["id"]),
             )
             if updated.rowcount != 1:
-                return jsonify(error="Order status changed while payment was being verified. Refresh your orders before retrying."), 409
-        except sqlite3.IntegrityError:
+                return jsonify(error="Order status changed while payment was being verified."), 409
+        except (sqlite3.IntegrityError, PG_INTEGRITY_ERROR):
             return jsonify(error="This transaction hash has already been used for another order"), 409
     return jsonify(ok=True, paid=True, message=message, tx_hash=tx_hash)
 
