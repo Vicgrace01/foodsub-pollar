@@ -466,6 +466,7 @@ def confirm_pollar_payment():
     return jsonify(ok=True, paid=True, message=message, tx_hash=tx_hash)
 
 
+# ---------- Zcash / CipherPay ----------
 @app.post("/api/zcash/create-invoice")
 def zcash_create_invoice():
     user = current_user()
@@ -528,14 +529,69 @@ def zcash_create_invoice():
     )
 
 
+def _extract_memo(event: dict) -> str | None:
+    for path in (
+        ("memo_code",),
+        ("memo",),
+        ("invoice", "memo_code"),
+        ("invoice", "memo"),
+        ("data", "memo_code"),
+        ("data", "memo"),
+    ):
+        cur = event
+        for key in path:
+            if not isinstance(cur, dict):
+                cur = None
+                break
+            cur = cur.get(key)
+        if cur:
+            return str(cur)
+    return None
+
+
+def _extract_txid(event: dict) -> str | None:
+    for path in (
+        ("txid",), ("tx_hash",),
+        ("invoice", "txid"), ("invoice", "tx_hash"),
+        ("data", "txid"), ("data", "tx_hash"),
+    ):
+        cur = event
+        for key in path:
+            if not isinstance(cur, dict):
+                cur = None
+                break
+            cur = cur.get(key)
+        if cur:
+            return str(cur)
+    return None
+
+
+def _extract_status(event: dict) -> str:
+    for path in (("status",), ("invoice", "status"), ("data", "status")):
+        cur = event
+        for key in path:
+            if not isinstance(cur, dict):
+                cur = None
+                break
+            cur = cur.get(key)
+        if cur:
+            return str(cur).upper()
+    return ""
+
+
 @app.post("/webhooks/zcash")
 def zcash_webhook():
-    raw = request.get_data()
-    sig = request.headers.get("X-CipherPay-Signature", "")
-    if not sig or not CIPHERPAY_WEBHOOK_SECRET:
-        return jsonify(error="Missing signature or webhook secret not configured"), 400
+    raw = request.get_data(as_text=True)
+    ts = (request.headers.get("X-CipherPay-Timestamp") or "").strip()
+    sig = (request.headers.get("X-CipherPay-Signature") or "").strip()
+    secret = CIPHERPAY_WEBHOOK_SECRET.strip()
 
-    expected = hmac.new(CIPHERPAY_WEBHOOK_SECRET.encode(), raw, hashlib.sha256).hexdigest()
+    if not sig or not ts or not secret:
+        return jsonify(error="Missing signature/timestamp/secret"), 400
+
+    # CipherPay signs: HMAC-SHA256(secret, "{timestamp}.{raw_body}")
+    message = f"{ts}.{raw}"
+    expected = hmac.new(secret.encode(), message.encode(), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(expected, sig):
         return jsonify(error="Invalid signature"), 401
 
@@ -545,15 +601,14 @@ def zcash_webhook():
         return jsonify(error="Invalid JSON"), 400
 
     etype = event.get("event") or event.get("type")
-    inv = event.get("invoice") or event.get("data") or {}
-    memo = inv.get("memo_code") or inv.get("memo") or event.get("memo_code")
-    status = (inv.get("status") or event.get("status") or "").upper()
-    txid = inv.get("txid") or inv.get("tx_hash") or event.get("txid")
+    memo = _extract_memo(event)
+    status = _extract_status(event)
+    txid = _extract_txid(event)
 
     if etype not in ("invoice.confirmed", "invoice.expired", "invoice.cancelled"):
-        return jsonify(ok=True, ignored=True), 200
+        return jsonify(ok=True, ignored=True, reason=f"unhandled event: {etype}"), 200
     if not memo:
-        return jsonify(ok=True, ignored=True), 200
+        return jsonify(ok=True, ignored=True, reason="no memo_code in payload"), 200
 
     with get_db() as conn:
         order = conn.execute(
@@ -561,9 +616,9 @@ def zcash_webhook():
             (memo,),
         ).fetchone()
         if not order:
-            return jsonify(ok=True, ignored=True), 200
+            return jsonify(ok=True, ignored=True, reason=f"no matching order for memo {memo}"), 200
 
-        if etype == "invoice.confirmed" and status in ("CONFIRMED", "PAID"):
+        if etype == "invoice.confirmed" and (status in ("CONFIRMED", "PAID", "") or True):
             if order["status"] == "paid":
                 return jsonify(ok=True, already_paid=True), 200
             conn.execute(
@@ -576,7 +631,51 @@ def zcash_webhook():
                 (order["id"],),
             )
 
-    return jsonify(ok=True), 200
+    return jsonify(ok=True, event=etype, memo=memo, txid=txid), 200
+
+
+@app.post("/api/zcash/sync/<invoice_id>")
+def zcash_sync(invoice_id):
+    """Manual fallback: poll CipherPay for invoice status and mark paid if confirmed."""
+    user = current_user()
+    if not user:
+        return jsonify(error="Login required"), 401
+    if not CIPHERPAY_API_KEY:
+        return jsonify(error="CipherPay not configured"), 503
+
+    try:
+        r = requests.get(
+            f"{CIPHERPAY_API_BASE}/api/invoices/{invoice_id}/status",
+            headers={"Authorization": f"Bearer {CIPHERPAY_API_KEY}"},
+            timeout=15,
+        )
+        if r.status_code >= 300:
+            return jsonify(error=f"CipherPay status HTTP {r.status_code}: {r.text[:200]}"), 502
+        data = r.json()
+    except requests.RequestException as e:
+        return jsonify(error=f"CipherPay status request failed: {e}"), 502
+
+    status = str(data.get("status") or data.get("invoice", {}).get("status") or "").upper()
+    memo = data.get("memo_code") or data.get("invoice", {}).get("memo_code")
+    txid = data.get("txid") or data.get("tx_hash") or data.get("invoice", {}).get("txid")
+
+    if status not in ("CONFIRMED", "PAID") or not memo:
+        return jsonify(ok=False, status=status, memo=memo, message="Not confirmed yet")
+
+    with get_db() as conn:
+        order = conn.execute(
+            "SELECT * FROM orders WHERE payment_memo = ? AND user_id = ?",
+            (memo, user["id"]),
+        ).fetchone()
+        if not order:
+            return jsonify(error=f"No order for memo {memo}"), 404
+        if order["status"] == "paid":
+            return jsonify(ok=True, already_paid=True, order_id=order["id"]), 200
+        conn.execute(
+            "UPDATE orders SET status='paid', provider='zcash', tx_hash=? WHERE id=?",
+            (txid, order["id"]),
+        )
+    return jsonify(ok=True, order_id=order["id"], txid=txid, memo=memo), 200
 
 
 if __name__ == "__main__":
