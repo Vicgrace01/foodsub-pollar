@@ -4,6 +4,9 @@ import os
 import re
 import secrets
 import sqlite3
+import hmac
+import hashlib
+import json as _json
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
 from typing import Any
@@ -13,8 +16,7 @@ from dotenv import load_dotenv
 from flask import Flask, jsonify, render_template, request, session
 from werkzeug.security import check_password_hash, generate_password_hash
 
-# ---------- Postgres driver ----------
-# Prefer psycopg (v3), fall back to psycopg2, else no Postgres.
+# ---------- Postgres driver (psycopg3 preferred, psycopg2 fallback) ----------
 HAS_PG = False
 PG_DRIVER = None
 PG_INTEGRITY_ERROR = type("PGIntegrityError", (Exception,), {})
@@ -51,6 +53,10 @@ POLLAR_MERCHANT_ADDRESS = os.getenv("POLLAR_MERCHANT_ADDRESS", "").strip()
 POLLAR_NETWORK = os.getenv("POLLAR_NETWORK", "testnet").strip().lower()
 POLLAR_HORIZON_URL = os.getenv("POLLAR_HORIZON_URL", "https://horizon-testnet.stellar.org").rstrip("/")
 DEMO_XLM_PER_USD = Decimal(os.getenv("DEMO_XLM_PER_USD", "1"))
+CIPHERPAY_API_KEY = os.getenv("CIPHERPAY_API_KEY", "").strip()
+CIPHERPAY_WEBHOOK_SECRET = os.getenv("CIPHERPAY_WEBHOOK_SECRET", "").strip()
+CIPHERPAY_API_BASE = os.getenv("CIPHERPAY_API_BASE", "https://api.testnet.cipherpay.app").rstrip("/")
+CIPHERPAY_CHECKOUT_BASE = os.getenv("CIPHERPAY_CHECKOUT_BASE", "https://testnet.cipherpay.app").rstrip("/")
 
 app = Flask(__name__, static_folder="static", template_folder="templates")
 app.secret_key = os.getenv("FLASK_SECRET_KEY") or secrets.token_urlsafe(48)
@@ -113,9 +119,7 @@ class DBWrapper:
 def get_db():
     if DATABASE_URL:
         if not HAS_PG:
-            raise RuntimeError(
-                f"DATABASE_URL is set but no Postgres driver could be imported: {PG_IMPORT_ERROR}"
-            )
+            raise RuntimeError(f"DATABASE_URL set but no Postgres driver: {PG_IMPORT_ERROR}")
         return DBWrapper(PG_CONNECT(DATABASE_URL), is_pg=True)
     Path(DB_PATH).parent.mkdir(parents=True, exist_ok=True)
     c = sqlite3.connect(DB_PATH, timeout=20)
@@ -213,6 +217,8 @@ def health():
         db=("postgres" if DATABASE_URL else "sqlite"),
         pg_driver=PG_DRIVER,
         pg_error=(PG_IMPORT_ERROR if (DATABASE_URL and not HAS_PG) else None),
+        pollar_configured=bool(POLLAR_PUBLISHABLE_KEY),
+        zcash_configured=bool(CIPHERPAY_API_KEY and CIPHERPAY_WEBHOOK_SECRET),
     )
 
 
@@ -296,6 +302,21 @@ def orders():
             (user["id"],),
         ).fetchall()
     return jsonify(orders=[dict(r) for r in rows])
+
+
+@app.get("/api/orders/<int:oid>")
+def order_by_id(oid):
+    user = current_user()
+    if not user:
+        return jsonify(error="Login required"), 401
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id, package, amount, status, provider, tx_hash, created FROM orders WHERE id = ? AND user_id = ?",
+            (oid, user["id"]),
+        ).fetchone()
+    if not row:
+        return jsonify(error="Not found"), 404
+    return jsonify(order=dict(row))
 
 
 @app.post("/api/checkout")
@@ -446,6 +467,117 @@ def confirm_pollar_payment():
         except (sqlite3.IntegrityError, PG_INTEGRITY_ERROR):
             return jsonify(error="This transaction hash has already been used for another order"), 409
     return jsonify(ok=True, paid=True, message=message, tx_hash=tx_hash)
+
+
+# ---------- Zcash / CipherPay ----------
+@app.post("/api/zcash/create-invoice")
+def zcash_create_invoice():
+    user = current_user()
+    if not user:
+        return jsonify(error="Login required"), 401
+    if not CIPHERPAY_API_KEY:
+        return jsonify(error="CipherPay is not configured on the server"), 503
+
+    data = json_body()
+    order_id = data.get("order_id")
+    if not order_id:
+        return jsonify(error="order_id is required"), 400
+
+    with get_db() as conn:
+        order = conn.execute(
+            "SELECT * FROM orders WHERE id = ? AND user_id = ? AND status = 'pending'",
+            (order_id, user["id"]),
+        ).fetchone()
+    if not order:
+        return jsonify(error="Pending order not found"), 404
+
+    payload = {
+        "amount": float(order["amount"]),
+        "currency": "USD",
+        "product_name": order["package"],
+        "metadata": {"order_id": str(order_id)},
+    }
+    try:
+        r = requests.post(
+            f"{CIPHERPAY_API_BASE}/api/invoices",
+            headers={"Authorization": f"Bearer {CIPHERPAY_API_KEY}", "Content-Type": "application/json"},
+            json=payload,
+            timeout=20,
+        )
+        if r.status_code >= 300:
+            return jsonify(error=f"CipherPay rejected the invoice (HTTP {r.status_code}): {r.text[:300]}"), 502
+        inv = r.json()
+    except requests.RequestException as e:
+        return jsonify(error=f"CipherPay request failed: {e}"), 502
+
+    memo = inv.get("memo_code") or inv.get("memo")
+    invoice_id = inv.get("invoice_id") or inv.get("id")
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE orders SET provider='zcash', payment_memo=? WHERE id=?",
+            (memo, order_id),
+        )
+
+    return jsonify(
+        order_id=order_id,
+        invoice_id=invoice_id,
+        memo_code=memo,
+        price_zec=inv.get("price_zec") or inv.get("amount_zec"),
+        zcash_uri=inv.get("zcash_uri") or inv.get("payment_uri"),
+        payment_address=inv.get("payment_address") or inv.get("address"),
+        expires_at=inv.get("expires_at"),
+        checkout_url=f"{CIPHERPAY_CHECKOUT_BASE}/invoice/{invoice_id}",
+    )
+
+
+@app.post("/webhooks/zcash")
+def zcash_webhook():
+    raw = request.get_data()
+    sig = request.headers.get("X-CipherPay-Signature", "")
+    if not sig or not CIPHERPAY_WEBHOOK_SECRET:
+        return jsonify(error="Missing signature or webhook secret not configured"), 400
+
+    expected = hmac.new(CIPHERPAY_WEBHOOK_SECRET.encode(), raw, hashlib.sha256).hexdigest()
+    if not hmac.compare_digest(expected, sig):
+        return jsonify(error="Invalid signature"), 401
+
+    try:
+        event = _json.loads(raw)
+    except Exception:
+        return jsonify(error="Invalid JSON"), 400
+
+    etype = event.get("event") or event.get("type")
+    inv = event.get("invoice") or event.get("data") or {}
+    memo = inv.get("memo_code") or inv.get("memo") or event.get("memo_code")
+    status = (inv.get("status") or event.get("status") or "").upper()
+
+    if etype not in ("invoice.confirmed", "invoice.expired", "invoice.cancelled"):
+        return jsonify(ok=True, ignored=True), 200
+    if not memo:
+        return jsonify(ok=True, ignored=True), 200
+
+    with get_db() as conn:
+        order = conn.execute(
+            "SELECT * FROM orders WHERE payment_memo = ? AND provider = 'zcash'",
+            (memo,),
+        ).fetchone()
+        if not order:
+            return jsonify(ok=True, ignored=True), 200
+
+        if etype == "invoice.confirmed" and status in ("CONFIRMED", "PAID"):
+            if order["status"] == "paid":
+                return jsonify(ok=True, already_paid=True), 200
+            conn.execute(
+                "UPDATE orders SET status='paid', provider='zcash' WHERE id=? AND status='pending'",
+                (order["id"],),
+            )
+        elif etype in ("invoice.expired", "invoice.cancelled"):
+            conn.execute(
+                "UPDATE orders SET status='expired' WHERE id=? AND status='pending'",
+                (order["id"],),
+            )
+
+    return jsonify(ok=True), 200
 
 
 if __name__ == "__main__":
