@@ -41,6 +41,7 @@ function PollarExperience() {
   const [walletBusy, setWalletBusy] = useState(false);
   const [success, setSuccess] = useState(null);
   const [stage, setStage] = useState('');
+  const [pollarActive, setPollarActive] = useState(false);
 
   const createStarted = useRef(false);
   const attemptRef = useRef(0);
@@ -61,7 +62,7 @@ function PollarExperience() {
       setCheckout(payload);
       checkoutRef.current = payload;
       setStatus(''); setError(''); setSuccess(null);
-      setBusy(false); setStage('');
+      setBusy(false); setStage(''); setPollarActive(false);
       txHashRef.current = null;
       attemptRef.current++;
     };
@@ -79,16 +80,14 @@ function PollarExperience() {
           if (state.hash) txHashRef.current = state.hash;
           switch (state.step) {
             case 'building': setStage('Building transaction on Pollar…'); break;
-            case 'built': setStage('Waiting for you to confirm in Pollar…'); break;
+            case 'built':
             case 'signing': setStage('Waiting for you to confirm in Pollar…'); break;
             case 'signed': setStage('Signed. Submitting…'); break;
             case 'submitting': setStage('Submitting to Stellar testnet…'); break;
             case 'signing-submitting':
             case 'building-signing-submitting': setStage('Building, signing, submitting…'); break;
             case 'awaiting_cosign': setStage('Waiting for co-sign approval…'); break;
-            case 'submitted':
-              setStage(`Submitted ${String(state.hash || '').slice(0, 10)}… awaiting ledger`);
-              break;
+            case 'submitted': setStage(`Submitted ${String(state.hash || '').slice(0, 10)}… awaiting ledger`); break;
             case 'success':
               setStage('Confirmed on Stellar');
               if (state.hash) txHashRef.current = state.hash;
@@ -121,13 +120,28 @@ function PollarExperience() {
 
   useEffect(() => { if (!isAuthenticated) createStarted.current = false; }, [isAuthenticated]);
 
+  // When login completes, our modal can return
+  useEffect(() => {
+    if (isAuthenticated && pollarActive) setPollarActive(false);
+  }, [isAuthenticated, pollarActive]);
+
+  // Fallback: if user closed Pollar's modal without acting, our modal returns on focus
+  useEffect(() => {
+    if (!pollarActive || isAuthenticated) return;
+    const onFocus = () => setTimeout(() => {
+      if (!isAuthenticated) setPollarActive(false);
+    }, 800);
+    window.addEventListener('focus', onFocus);
+    return () => window.removeEventListener('focus', onFocus);
+  }, [pollarActive, isAuthenticated]);
+
   // Sync FoodSub logout → Pollar logout
   useEffect(() => {
     const onFoodsubLogout = () => {
       attemptRef.current++;
       setCheckout(null); checkoutRef.current = null;
       setStatus(''); setError(''); setStage(''); setSuccess(null);
-      setBusy(false); setWalletBusy(false);
+      setBusy(false); setWalletBusy(false); setPollarActive(false);
       createStarted.current = false;
       try { if (typeof logout === 'function') logout(); } catch (e) { console.warn('Pollar logout', e); }
     };
@@ -183,6 +197,18 @@ function PollarExperience() {
     } finally { setWalletBusy(false); }
   }
 
+  function handleConnect() {
+    if (typeof window.foodSubToast === 'function') {
+      window.foodSubToast('Opening Pollar login — look for the Pollar popup.');
+    }
+    setPollarActive(true);
+    try { openLoginModal(); } catch (e) {
+      console.warn('openLoginModal', e);
+      setPollarActive(false);
+      setError(e?.message || 'Could not open Pollar login modal.');
+    }
+  }
+
   async function payWithPollar() {
     setError(''); setStatus(''); setSuccess(null);
     const order = checkoutRef.current;
@@ -197,7 +223,11 @@ function PollarExperience() {
     const attempt = ++attemptRef.current;
     txHashRef.current = null;
     setBusy(true);
-    setStage('Opening Pollar confirmation…');
+    setPollarActive(true);
+    setStage('Waiting for confirmation in Pollar…');
+    if (typeof window.foodSubToast === 'function') {
+      window.foodSubToast('Look for the Pollar confirmation popup and press Confirm.');
+    }
 
     const params = {
       destination: merchantAddress,
@@ -219,15 +249,13 @@ function PollarExperience() {
 
       if (attempt !== attemptRef.current) return;
 
+      // Pollar's modal is closed. Bring ours back with progress.
+      setPollarActive(false);
+
       if (outcome?.__timeout) {
         const late = await waitForHash(HASH_WAIT_MS);
-        if (late) {
-          txHashRef.current = late;
-        } else {
-          throw new Error(
-            'Pollar did not return within 2 minutes. If you confirmed, the payment may still land — open Pollar history before retrying.'
-          );
-        }
+        if (late) txHashRef.current = late;
+        else throw new Error('Pollar did not return within 2 minutes. If you confirmed, the payment may still land — open Pollar history before retrying.');
       } else if (outcome?.status === 'error') {
         throw new Error(`Pollar rejected the payment: ${describeOutcome(outcome)}`);
       } else if (outcome?.status === 'cosign_pending') {
@@ -235,12 +263,10 @@ function PollarExperience() {
       }
 
       if (outcome?.hash) txHashRef.current = outcome.hash;
-
       if (!txHashRef.current) {
         const late = await waitForHash(HASH_WAIT_MS);
         if (late) txHashRef.current = late;
       }
-
       if (attempt !== attemptRef.current) return;
 
       if (!txHashRef.current) {
@@ -269,6 +295,7 @@ function PollarExperience() {
       }
     } catch (err) {
       if (attempt !== attemptRef.current) return;
+      setPollarActive(false);
       setError(err?.message || 'Payment failed.');
       setStage('');
       if (txHashRef.current) {
@@ -283,6 +310,7 @@ function PollarExperience() {
     attemptRef.current++;
     setBusy(false);
     setStage('');
+    setPollarActive(false);
     setStatus('Stopped waiting. If you confirmed in Pollar, check transaction history before retrying.');
   }
 
@@ -291,6 +319,7 @@ function PollarExperience() {
     attemptRef.current++;
     setCheckout(null); checkoutRef.current = null;
     setStatus(''); setError(''); setStage(''); setSuccess(null); setBusy(false);
+    setPollarActive(false);
   }
 
   async function handleLogout() {
@@ -298,7 +327,7 @@ function PollarExperience() {
     attemptRef.current++;
     setCheckout(null); checkoutRef.current = null;
     setStatus(''); setError(''); setStage(''); setSuccess(null);
-    setBusy(false); setWalletBusy(false);
+    setBusy(false); setWalletBusy(false); setPollarActive(false);
     createStarted.current = false;
   }
 
@@ -310,14 +339,14 @@ function PollarExperience() {
     <>
       <button
         className={`pollar-nav-btn ${isAuthenticated ? 'connected' : ''}`}
-        onClick={() => (isAuthenticated ? openWalletBalanceModal() : openLoginModal())}
+        onClick={() => (isAuthenticated ? openWalletBalanceModal() : handleConnect())}
       >
         {isAuthenticated && walletAddress
           ? `Pollar · ${shortAddress(walletAddress)}`
           : isAuthenticated ? 'Pollar wallet' : 'Connect Pollar'}
       </button>
 
-      {checkout && createPortal(
+      {checkout && !pollarActive && createPortal(
         <div
           className="pollar-overlay"
           role="dialog"
@@ -350,7 +379,7 @@ function PollarExperience() {
                 <button className="pollar-action" onClick={closeModal}>Done</button>
               </>
             ) : !isAuthenticated ? (
-              <button className="pollar-action" onClick={openLoginModal}>Connect / sign in with Pollar</button>
+              <button className="pollar-action" onClick={handleConnect}>Connect / sign in with Pollar</button>
             ) : (
               <>
                 <div className="pollar-address">
